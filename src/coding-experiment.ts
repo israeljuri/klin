@@ -30,6 +30,10 @@ type ApiResponse = {
   }>;
 };
 
+type Edit = { file: string; old_text: string; new_text: string };
+
+type EditResponse = { edits: Edit[] };
+
 const fixtureRoot = join(process.cwd(), 'lab', 'coding-task');
 const resultsRoot = join(process.cwd(), 'results');
 
@@ -69,51 +73,57 @@ function extractText(data: ApiResponse): string {
     .join('');
 }
 
-function normalizePatch(raw: string): string {
-  let patch = raw.replace(/^```(?:diff|patch)?\s*/i, '').replace(/\s*```\s*$/i, '');
-  patch = patch.replace(/^\s*Here(?:'s| is) the (?:unified )?diff:?\s*/i, '');
-  patch = patch.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
-
-  const diffIndex = patch.indexOf('diff --git ');
-  if (diffIndex > 0) patch = patch.slice(diffIndex);
-
-  return patch.trimEnd() + '\n';
+function stripCodeFence(raw: string): string {
+  return raw.replace(/^```(?:json)?\s*/i, '').replace(/\s*```\s*$/i, '').trim();
 }
 
-function validatePatch(patch: string): { valid: boolean; reason?: string } {
-  if (!patch.trim()) return { valid: false, reason: 'empty_patch' };
-  if (!patch.includes('diff --git ')) return { valid: false, reason: 'missing_diff_header' };
-  if (!/^diff --git a\/\S+ b\/\S+/m.test(patch)) {
-    return { valid: false, reason: 'invalid_diff_header' };
-  }
-  if (!/^--- /m.test(patch) || !/^\+\+\+ /m.test(patch)) {
-    return { valid: false, reason: 'missing_file_headers' };
-  }
-  if (!/^@@ /m.test(patch)) return { valid: false, reason: 'missing_hunk_header' };
-  return { valid: true };
-}
-
-async function runGitApplyCheck(patchFile: string): Promise<{ valid: boolean; output: string }> {
-  const { execFile } = await import('node:child_process');
-  const { promisify } = await import('node:util');
-  const execFileAsync = promisify(execFile);
-
+function parseEdits(raw: string): EditResponse {
+  const text = stripCodeFence(raw);
+  let value: unknown;
   try {
-    const result = await execFileAsync('git', ['apply', '--check', patchFile], {
-      cwd: process.cwd(),
-    });
-    return { valid: true, output: `${result.stdout}${result.stderr}`.trim() };
-  } catch (error) {
-    const e = error as { stdout?: string; stderr?: string; message?: string };
-    return {
-      valid: false,
-      output: `${e.stdout ?? ''}${e.stderr ?? ''}`.trim() || e.message || 'git apply --check failed',
-    };
+    value = JSON.parse(text);
+  } catch {
+    const start = text.indexOf('{');
+    const end = text.lastIndexOf('}');
+    if (start < 0 || end <= start) throw new Error('Model output was not valid JSON');
+    value = JSON.parse(text.slice(start, end + 1));
+  }
+
+  if (!value || typeof value !== 'object' || !Array.isArray((value as { edits?: unknown }).edits)) {
+    throw new Error('Model JSON must contain an edits array');
+  }
+
+  const edits = (value as { edits: unknown[] }).edits;
+  for (const edit of edits) {
+    if (!edit || typeof edit !== 'object') throw new Error('Every edit must be an object');
+    const e = edit as Record<string, unknown>;
+    if (typeof e.file !== 'string' || typeof e.old_text !== 'string' || typeof e.new_text !== 'string') {
+      throw new Error('Every edit requires string file, old_text, and new_text fields');
+    }
+  }
+  return { edits: edits as Edit[] };
+}
+
+async function validateEdits(edits: Edit[]): Promise<void> {
+  if (edits.length === 0) throw new Error('Model returned no edits');
+  const seen = new Set<string>();
+  for (const edit of edits) {
+    if (!edit.file || edit.file.includes('\0') || edit.file.startsWith('/') || edit.file.split('/').includes('..')) {
+      throw new Error(`Unsafe edit path: ${edit.file}`);
+    }
+    if (seen.has(edit.file)) throw new Error(`Duplicate edit file: ${edit.file}`);
+    seen.add(edit.file);
+    const path = join(fixtureRoot, edit.file);
+    const current = await readFile(path, 'utf8');
+    if (!edit.old_text) throw new Error(`Empty old_text is not allowed: ${edit.file}`);
+    const occurrences = current.split(edit.old_text).length - 1;
+    if (occurrences === 0) throw new Error(`old_text was not found in ${edit.file}`);
+    if (occurrences > 1) throw new Error(`old_text is ambiguous in ${edit.file}: found ${occurrences} matches`);
   }
 }
 
 async function main() {
-  console.log('Klin — realistic coding task experiment');
+  console.log('Klin — structured-edit coding experiment');
   console.log(`Model: ${model}`);
 
   const context = await loadContext();
@@ -134,8 +144,11 @@ async function main() {
     '- Do not add dependencies or refactor unrelated code.',
     '',
     'OUTPUT CONTRACT',
-    'Return ONLY a unified git diff that can be applied with git apply.',
-    'Do not return explanations, markdown fences, or complete unchanged files.',
+    'Return ONLY valid JSON. Do not use markdown fences or explanations.',
+    'The JSON must have exactly this top-level shape:',
+    '{"edits":[{"file":"relative/path","old_text":"exact existing text","new_text":"replacement text"}]}',
+    'Each edit must replace an exact, unique piece of existing file content.',
+    'Do not return Git diff syntax, line numbers, blob hashes, or complete unchanged files.',
     '',
     'REPOSITORY CONTEXT',
     context,
@@ -143,7 +156,7 @@ async function main() {
 
   console.log(`Context characters: ${context.length.toLocaleString()}`);
   console.log(`Prompt characters: ${prompt.length.toLocaleString()}`);
-  console.log('Sending implementation request...');
+  console.log('Sending ONE controlled implementation request...');
 
   const response = await fetch(url, {
     method: 'POST',
@@ -159,30 +172,18 @@ async function main() {
   try {
     data = JSON.parse(raw) as ApiResponse;
   } catch {
-    throw new Error(`Meta returned non-JSON (HTTP ${response.status}): ${raw}`);
+    throw new Error(`Meta returned non-JSON (HTTP ${response.status})`);
   }
-
-  if (!response.ok) {
-    throw new Error(`Meta API error (HTTP ${response.status}): ${raw}`);
-  }
+  if (!response.ok) throw new Error(`Meta API error (HTTP ${response.status}): ${raw}`);
 
   const usage = usageOf(data);
   const rawOutput = extractText(data);
-  const patch = normalizePatch(rawOutput);
-  const structuralValidation = validatePatch(patch);
+  const parsed = parseEdits(rawOutput);
+  await validateEdits(parsed.edits);
 
   await mkdir(resultsRoot, { recursive: true });
-  await writeFile(join(resultsRoot, 'coding-task-raw-response.json'), raw + '\n');
-  await writeFile(join(resultsRoot, 'coding-task.patch'), patch);
-
-  let applyCheck = { valid: false, output: 'not_run' };
-  if (structuralValidation.valid) {
-    applyCheck = await runGitApplyCheck(join(resultsRoot, 'coding-task.patch'));
-  } else {
-    applyCheck = { valid: false, output: `Structural validation failed: ${structuralValidation.reason}` };
-  }
-
-  const patchValid = structuralValidation.valid && applyCheck.valid;
+  await writeFile(join(resultsRoot, 'coding-task-structured-raw-response.json'), raw + '\n');
+  await writeFile(join(resultsRoot, 'coding-task-edits.json'), JSON.stringify(parsed, null, 2) + '\n');
 
   console.log(`HTTP ${response.status} ${data.status ?? ''}`);
   console.log(`Response ID: ${data.id ?? 'unknown'}`);
@@ -192,52 +193,16 @@ async function main() {
   console.log(`Reasoning tokens: ${usage.reasoning_tokens.toLocaleString()}`);
   console.log(`Total tokens: ${usage.total_tokens.toLocaleString()}`);
   console.log(`Returned output characters: ${rawOutput.length.toLocaleString()}`);
-  console.log(`Normalized patch characters: ${patch.length.toLocaleString()}`);
-  console.log(`Patch validation: ${patchValid ? 'PASS' : 'FAIL'}`);
-  if (!applyCheck.valid) console.log(`git apply --check: ${applyCheck.output}`);
-
-  await writeFile(
-    join(resultsRoot, 'coding-task-report.json'),
-    JSON.stringify(
-      {
-        generated_at: new Date().toISOString(),
-        model,
-        endpoint: url,
-        task: 'Implement applyDiscount and tests',
-        context_files: files,
-        context_characters: context.length,
-        prompt_characters: prompt.length,
-        response_id: data.id,
-        usage,
-        raw_output_characters: rawOutput.length,
-        patch_characters: patch.length,
-        patch_file: 'results/coding-task.patch',
-        validation: {
-          structural: structuralValidation,
-          git_apply_check: applyCheck,
-          patch_valid: patchValid,
-        },
-        notes: [
-          'Klin saves the raw API response separately from the normalized patch.',
-          'Klin strips accidental markdown fences/preamble before validation.',
-          'Klin runs git apply --check automatically and never applies the patch.',
-          'A patch must pass both structural validation and git apply --check to be considered valid.',
-        ],
-      },
-      null,
-      2,
-    ) + '\n',
-  );
-
+  console.log(`Validated edits: ${parsed.edits.length}`);
+  console.log('\nStructured edit validation: PASS');
+  console.log('No files were modified.');
   console.log('\nResults written:');
-  console.log('  results/coding-task-raw-response.json');
-  console.log('  results/coding-task.patch');
-  console.log('  results/coding-task-report.json');
-  console.log('\nPatch was NOT applied.');
+  console.log('  results/coding-task-structured-raw-response.json');
+  console.log('  results/coding-task-edits.json');
 }
 
 main().catch((error) => {
-  console.error('\nCoding experiment failed:');
+  console.error('\nStructured coding experiment failed:');
   console.error(error instanceof Error ? error.message : error);
   process.exit(1);
 });
