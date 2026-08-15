@@ -1,5 +1,9 @@
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 import { readFile, writeFile, rename, rm, mkdir } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
+
+const execFileAsync = promisify(execFile);
 
 export type Edit = {
   file: string;
@@ -10,6 +14,11 @@ export type Edit = {
 export type ReconcileResult = {
   changed_files: string[];
   backup_dir: string;
+};
+
+export type VerificationResult = {
+  diff_check: { passed: boolean; output: string };
+  tests: { passed: boolean; output: string };
 };
 
 function assertSafeRelativePath(file: string): void {
@@ -79,4 +88,42 @@ export async function rollback(files: string[], root = process.cwd(), backupDir:
     await rename(backupPath, targetPath);
   }
   await rm(backupDir, { recursive: true, force: true });
+}
+
+async function runCommand(root: string, command: string, args: string[]): Promise<{ passed: boolean; output: string }> {
+  try {
+    const result = await execFileAsync(command, args, { cwd: root, maxBuffer: 2 * 1024 * 1024 });
+    return { passed: true, output: `${result.stdout}${result.stderr}` };
+  } catch (error) {
+    const e = error as { stdout?: string; stderr?: string; message?: string };
+    return { passed: false, output: `${e.stdout ?? ''}${e.stderr ?? ''}${e.message ?? ''}` };
+  }
+}
+
+export async function verifyChanges(root: string, testCommand = 'node --test'): Promise<VerificationResult> {
+  const diff_check = await runCommand(root, 'git', ['diff', '--check']);
+  const [testCommandName, ...testArgs] = testCommand.split(' ');
+  const tests = await runCommand(root, testCommandName, testArgs);
+  return { diff_check, tests };
+}
+
+export async function reconcileAndVerify(
+  edits: Edit[],
+  root = process.cwd(),
+  testCommand = 'node --test',
+): Promise<{ result: ReconcileResult; verification: VerificationResult }> {
+  const result = await applyEdits(edits, root);
+  const verification = await verifyChanges(root, testCommand);
+
+  if (!verification.diff_check.passed || !verification.tests.passed) {
+    await rollback(result.changed_files, root, result.backup_dir);
+    throw new Error([
+      'Reconciliation verification failed.',
+      !verification.diff_check.passed ? `git diff --check:\n${verification.diff_check.output}` : '',
+      !verification.tests.passed ? `tests:\n${verification.tests.output}` : '',
+    ].filter(Boolean).join('\n\n'));
+  }
+
+  await rm(result.backup_dir, { recursive: true, force: true });
+  return { result, verification };
 }
