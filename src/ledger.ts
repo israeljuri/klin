@@ -46,6 +46,37 @@ export function assertWithinBudget(guard: BudgetGuard, estimatedAdditionalCostUs
   }
 }
 
+export class BudgetCoordinator {
+  private tail = Promise.resolve();
+  private reservedUsd = 0;
+
+  constructor(private readonly limitUsd: number, private spentUsd = 0) {}
+
+  async reserve(amountUsd: number): Promise<number> {
+    if (!Number.isFinite(amountUsd) || amountUsd < 0) throw new Error('Budget reservation must be a non-negative finite number');
+    const operation = this.tail.then(() => {
+      assertWithinBudget({ limit_usd: this.limitUsd, spent_usd: this.spentUsd + this.reservedUsd }, amountUsd);
+      this.reservedUsd += amountUsd;
+      return amountUsd;
+    });
+    this.tail = operation.then(() => undefined, () => undefined);
+    return operation;
+  }
+
+  async settle(reservedUsd: number, actualCostUsd: number): Promise<void> {
+    if (!Number.isFinite(actualCostUsd) || actualCostUsd < 0) throw new Error('Actual cost must be a non-negative finite number');
+    const operation = this.tail.then(() => {
+      this.reservedUsd = Math.max(0, this.reservedUsd - reservedUsd);
+      this.spentUsd += actualCostUsd;
+    });
+    this.tail = operation.then(() => undefined, () => undefined);
+    await operation;
+  }
+
+  get spent(): number { return this.spentUsd; }
+  get reserved(): number { return this.reservedUsd; }
+}
+
 export function budgetSummary(limitUsd: number, entries: LedgerEntry[]): Budget {
   const spent_usd = entries.reduce((sum, entry) => sum + entry.estimated_cost_usd, 0);
   return { limit_usd: limitUsd, spent_usd, remaining_usd: Math.max(0, limitUsd - spent_usd) };
@@ -60,10 +91,17 @@ export async function loadLedger(root: string): Promise<LedgerEntry[]> {
   }
 }
 
+const ledgerTails = new Map<string, Promise<void>>();
+
 export async function appendLedger(root: string, entry: LedgerEntry): Promise<void> {
-  const entries = await loadLedger(root);
-  entries.push(entry);
-  const path = join(root, LEDGER_FILE);
-  await mkdir(join(root, '.klin'), { recursive: true });
-  await writeFile(path, JSON.stringify(entries, null, 2) + '\n');
+  const previous = ledgerTails.get(root) ?? Promise.resolve();
+  const operation = previous.then(async () => {
+    const entries = await loadLedger(root);
+    entries.push(entry);
+    const path = join(root, LEDGER_FILE);
+    await mkdir(join(root, '.klin'), { recursive: true });
+    await writeFile(path, JSON.stringify(entries, null, 2) + '\n');
+  });
+  ledgerTails.set(root, operation.then(() => undefined, () => undefined));
+  await operation;
 }
