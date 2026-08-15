@@ -34,6 +34,7 @@ export async function loadProjectState(path: string): Promise<ProjectState> {
         files: contract.files,
         test_command: contract.test_command,
         status: 'ready',
+        attempts: 0,
       });
     }
     const state: ProjectState = { milestones: [], tasks };
@@ -68,13 +69,15 @@ export async function runProject(options: ProjectRunnerOptions): Promise<Project
     }
 
     const maxAttempts = options.maxAttemptsPerTask ?? 2;
-    let attempt = 0;
+    let attempt = task.attempts ?? 0;
     let completed = false;
     task.status = 'in-progress';
     await saveProjectState(statePath, state);
 
     while (!completed && attempt < maxAttempts) {
       attempt += 1;
+      task.attempts = attempt;
+      await saveProjectState(statePath, state);
       try {
         const result = await runPipeline({
           root: options.root,
