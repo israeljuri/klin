@@ -1,0 +1,8 @@
+{
+  "id": "cart-subtotal-tests-001",
+  "description": "Add focused regression tests for subtotalCents in the cart module. Cover an empty cart returning 0 and a cart with multiple items and quantities producing the correct subtotal. Do not change implementation code or unrelated tests.",
+  "files": [
+    "lab/coding-task/src/cart.test.js"
+  ],
+  "test_command": "pnpm --dir lab/coding-task test"
+}
