@@ -5,6 +5,7 @@ import { expandContext } from './context-graph.js';
 import { getReadyTasks, selectParallelReadyTasks, validateProjectState, type ProjectState, type Task as GraphTask } from './task-graph.js';
 import { runPipeline, type Model } from './pipeline.js';
 import { decideRetry } from './retry-policy.js';
+import { BudgetCoordinator, loadLedger } from './ledger.js';
 
 export type ProjectRunnerOptions = {
   root: string; statePath?: string; model: Model; modelName: string; budgetUsd?: number;
@@ -32,16 +33,7 @@ export async function loadProjectState(path: string): Promise<ProjectState> {
     const tasks: GraphTask[] = [];
     for (const file of files) {
       const contract = JSON.parse(await readFile(join(tasksDir, file), 'utf8')) as TaskContract;
-      tasks.push({
-        id: contract.id,
-        title: contract.id,
-        description: contract.description,
-        dependencies: contract.dependencies ?? [],
-        files: contract.files,
-        test_command: contract.test_command,
-        status: 'ready',
-        attempts: 0,
-      });
+      tasks.push({ id: contract.id, title: contract.id, description: contract.description, dependencies: contract.dependencies ?? [], files: contract.files, test_command: contract.test_command, status: 'ready', attempts: 0 });
     }
     const state: ProjectState = { milestones: [], tasks };
     validateProjectState(state); await saveProjectState(path, state); return state;
@@ -56,8 +48,6 @@ export async function saveProjectState(path: string, state: ProjectState): Promi
 function createStateWriter(path: string): StateWriter {
   let tail = Promise.resolve();
   return async (state: ProjectState) => {
-    // Parallel tasks mutate the same in-memory state. Serialize snapshots so one
-    // task can never overwrite another task's newer state on disk.
     const snapshot = JSON.stringify(state);
     tail = tail.then(async () => {
       await mkdir(resolve(path, '..'), { recursive: true });
@@ -67,13 +57,7 @@ function createStateWriter(path: string): StateWriter {
   };
 }
 
-async function runTaskWithRetries(
-  task: GraphTask,
-  selectedFiles: string[],
-  options: ProjectRunnerOptions,
-  state: ProjectState,
-  persist: StateWriter,
-): Promise<{ status: 'completed' | 'failed'; error?: unknown }> {
+async function runTaskWithRetries(task: GraphTask, selectedFiles: string[], options: ProjectRunnerOptions, state: ProjectState, persist: StateWriter, budgetCoordinator?: BudgetCoordinator): Promise<{ status: 'completed' | 'failed'; error?: unknown }> {
   const maxAttempts = options.maxAttemptsPerTask ?? 2;
   let attempt = task.attempts ?? 0;
   task.status = 'in-progress';
@@ -86,12 +70,7 @@ async function runTaskWithRetries(
     try {
       const result = await runPipeline({
         root: options.root,
-        task: {
-          id: task.id,
-          description: task.description,
-          files: selectedFiles,
-          test_command: task.test_command ?? 'node --test',
-        },
+        task: { id: task.id, description: task.description, files: selectedFiles, test_command: task.test_command ?? 'node --test' },
         model: options.model,
         modelName: options.modelName,
         budgetUsd: options.budgetUsd,
@@ -99,23 +78,16 @@ async function runTaskWithRetries(
         outputRatePerMillion: options.outputRatePerMillion,
         contextMaxCharacters: options.contextMaxCharacters,
         dryRun: options.dryRun,
+        budgetCoordinator,
       });
-
-      if (options.dryRun) {
-        task.status = 'ready';
-        return { status: 'completed' };
-      }
+      if (options.dryRun) { task.status = 'ready'; return { status: 'completed' }; }
       if (result.status !== 'completed') throw new Error(`Task ${task.id} did not complete`);
       task.status = 'completed';
       await persist(state);
       return { status: 'completed' };
     } catch (error) {
       const decision = decideRetry({ attempts: attempt, maxAttempts, error });
-      if (!decision.retry) {
-        task.status = 'failed';
-        await persist(state);
-        return { status: 'failed', error };
-      }
+      if (!decision.retry) { task.status = 'failed'; await persist(state); return { status: 'failed', error }; }
       task.status = 'ready';
       await persist(state);
     }
@@ -135,6 +107,10 @@ export async function runProject(options: ProjectRunnerOptions): Promise<Project
   let executed = 0;
   const concurrency = Math.max(1, options.concurrency ?? 1);
   const maxTasks = options.maxTasks ?? Number.MAX_SAFE_INTEGER;
+  const budgetConfigured = options.budgetUsd !== undefined && options.inputRatePerMillion !== undefined && options.outputRatePerMillion !== undefined;
+  const existingLedger = budgetConfigured ? await loadLedger(options.root) : [];
+  const existingSpend = existingLedger.reduce((sum, entry) => sum + entry.estimated_cost_usd, 0);
+  const budgetCoordinator = budgetConfigured ? new BudgetCoordinator(options.budgetUsd!, existingSpend) : undefined;
 
   while (executed < maxTasks) {
     const ready = getReadyTasks(state);
@@ -142,12 +118,9 @@ export async function runProject(options: ProjectRunnerOptions): Promise<Project
       const remaining = state.tasks.filter(t => t.status !== 'completed').map(t => t.id);
       return { status: remaining.length ? 'blocked' : 'completed', completedTaskIds, remainingTaskIds: remaining };
     }
-
     const capacity = Math.min(concurrency, maxTasks - executed);
     const batch = selectParallelReadyTasks(state, capacity);
-    if (!batch.length) {
-      return { status: 'blocked', completedTaskIds, remainingTaskIds: state.tasks.filter(t => t.status !== 'completed').map(t => t.id) };
-    }
+    if (!batch.length) return { status: 'blocked', completedTaskIds, remainingTaskIds: state.tasks.filter(t => t.status !== 'completed').map(t => t.id) };
 
     const prepared: Array<{ task: GraphTask; selectedFiles: string[] }> = [];
     for (const task of batch) {
@@ -160,32 +133,17 @@ export async function runProject(options: ProjectRunnerOptions): Promise<Project
       prepared.push({ task, selectedFiles });
     }
 
-    if (options.dryRun) {
-      return { status: 'pending-model', completedTaskIds, remainingTaskIds: state.tasks.filter(t => t.status !== 'completed').map(t => t.id) };
-    }
+    if (options.dryRun) return { status: 'pending-model', completedTaskIds, remainingTaskIds: state.tasks.filter(t => t.status !== 'completed').map(t => t.id) };
 
-    const results = await Promise.all(prepared.map(({ task, selectedFiles }) =>
-      runTaskWithRetries(task, selectedFiles, options, state, persist),
-    ));
-
+    const results = await Promise.all(prepared.map(({ task, selectedFiles }) => runTaskWithRetries(task, selectedFiles, options, state, persist, budgetCoordinator)));
     for (let index = 0; index < results.length; index += 1) {
-      const result = results[index];
-      const task = prepared[index].task;
-      if (result.status === 'completed') {
-        completedTaskIds.push(task.id);
-        executed += 1;
-      }
+      if (results[index].status === 'completed') { completedTaskIds.push(prepared[index].task.id); executed += 1; }
     }
 
-    const failed = results.find((result) => result.status === 'failed');
+    const failed = results.find(result => result.status === 'failed');
     if (failed) {
       const failedIndex = results.indexOf(failed);
-      return {
-        status: 'failed',
-        completedTaskIds,
-        failedTaskId: prepared[failedIndex].task.id,
-        remainingTaskIds: state.tasks.filter(t => t.status !== 'completed').map(t => t.id),
-      };
+      return { status: 'failed', completedTaskIds, failedTaskId: prepared[failedIndex].task.id, remainingTaskIds: state.tasks.filter(t => t.status !== 'completed').map(t => t.id) };
     }
   }
 
