@@ -68,3 +68,4 @@ export function createLiveModelFromEnv(): { model: Model; modelName: string } {
 
 export function createDryRunModel(): { model: Model; modelName: string } {
   return { modelName: 'dry-run', model: async () => ({ response_id: 'dry-run', edits: [{ file: 'lab/coding-task/src/pricing.js', old_text: "import { subtotalCents } from './cart.js';\n\nexport function applyDiscount(cart, discountPercent) {\n  throw new Error('TODO: implement applyDiscount');\n}", new_text: "import { subtotalCents } from './cart.js';\n\nexport function applyDiscount(cart, discountPercent) {\n  if (discountPercent < 0 || discountPercent > 100) throw new RangeError('discountPercent must be between 0 and 100 inclusive');\n  return Math.round(subtotalCents(cart) * (100 - discountPercent) / 100);\n}" } as Edit], usage: { input_tokens: 0, cached_tokens: 0, output_tokens: 0, reasoning_tokens: 0, total_tokens: 0 } }) };
+}
