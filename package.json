@@ -5,7 +5,8 @@
   "type": "module",
   "scripts": {
     "experiment": "tsx src/experiment.ts",
-    "coding-experiment": "tsx src/coding-experiment.ts"
+    "coding-experiment": "tsx src/coding-experiment.ts",
+    "test:unit": "tsx --test src/*.test.ts"
   },
   "dependencies": {
     "dotenv": "^16.4.7"
