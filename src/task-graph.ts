@@ -8,6 +8,7 @@ export type Task = {
   files?: string[];
   test_command?: string;
   status: TaskStatus;
+  attempts?: number;
 };
 
 export type Milestone = { id: string; title: string; taskIds: string[] };
@@ -18,6 +19,9 @@ export function validateProjectState(state: ProjectState): void {
   for (const task of state.tasks) {
     if (ids.has(task.id)) throw new Error(`Duplicate task id: ${task.id}`);
     ids.add(task.id);
+    if (task.attempts !== undefined && (!Number.isInteger(task.attempts) || task.attempts < 0)) {
+      throw new Error(`Invalid attempt count for task: ${task.id}`);
+    }
   }
   for (const task of state.tasks) {
     for (const dependency of task.dependencies) {
