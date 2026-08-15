@@ -51,6 +51,24 @@ export function getReadyTasks(state: ProjectState): Task[] {
   );
 }
 
+export function selectParallelReadyTasks(state: ProjectState, maxTasks: number): Task[] {
+  if (!Number.isInteger(maxTasks) || maxTasks < 1) throw new Error('maxTasks must be a positive integer');
+  const selected: Task[] = [];
+  const claimedFiles = new Set<string>();
+  for (const task of getReadyTasks(state)) {
+    if (selected.length >= maxTasks) break;
+    const files = task.files ?? [];
+    // Tasks without an explicit file set are treated as exclusive because their edit scope is unknown.
+    if (files.length === 0 && selected.length > 0) continue;
+    const normalized = new Set(files);
+    if (selected.some(candidate => (candidate.files ?? []).length === 0)) continue;
+    if ([...normalized].some(file => claimedFiles.has(file))) continue;
+    selected.push(task);
+    for (const file of normalized) claimedFiles.add(file);
+  }
+  return selected;
+}
+
 export function nextTask(state: ProjectState): Task | undefined {
   return getReadyTasks(state)[0];
 }
