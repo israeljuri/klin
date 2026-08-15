@@ -11,8 +11,14 @@ export type ProjectRunnerOptions = {
   inputRatePerMillion?: number; outputRatePerMillion?: number; contextMaxCharacters?: number;
   dryRun?: boolean; maxTasks?: number; maxAttemptsPerTask?: number; concurrency?: number;
 };
-export type ProjectRunResult = { status: 'completed' | 'blocked' | 'failed' | 'pending-model'; completedTaskIds: string[]; failedTaskId?: string; remainingTaskIds: string[] };
+export type ProjectRunResult = {
+  status: 'completed' | 'blocked' | 'failed' | 'pending-model';
+  completedTaskIds: string[];
+  failedTaskId?: string;
+  remainingTaskIds: string[];
+};
 type TaskContract = { id: string; description: string; files: string[]; test_command?: string; dependencies?: string[] };
+type StateWriter = (state: ProjectState) => Promise<void>;
 
 export async function loadProjectState(path: string): Promise<ProjectState> {
   try {
@@ -47,22 +53,36 @@ export async function saveProjectState(path: string, state: ProjectState): Promi
   await writeFile(resolve(path), JSON.stringify(state, null, 2) + '\n');
 }
 
+function createStateWriter(path: string): StateWriter {
+  let tail = Promise.resolve();
+  return async (state: ProjectState) => {
+    // Parallel tasks mutate the same in-memory state. Serialize snapshots so one
+    // task can never overwrite another task's newer state on disk.
+    const snapshot = JSON.stringify(state);
+    tail = tail.then(async () => {
+      await mkdir(resolve(path, '..'), { recursive: true });
+      await writeFile(resolve(path), JSON.stringify(JSON.parse(snapshot), null, 2) + '\n');
+    });
+    await tail;
+  };
+}
+
 async function runTaskWithRetries(
   task: GraphTask,
   selectedFiles: string[],
   options: ProjectRunnerOptions,
   state: ProjectState,
-  statePath: string,
+  persist: StateWriter,
 ): Promise<{ status: 'completed' | 'failed'; error?: unknown }> {
   const maxAttempts = options.maxAttemptsPerTask ?? 2;
   let attempt = task.attempts ?? 0;
   task.status = 'in-progress';
-  await saveProjectState(statePath, state);
+  await persist(state);
 
   while (attempt < maxAttempts) {
     attempt += 1;
     task.attempts = attempt;
-    await saveProjectState(statePath, state);
+    await persist(state);
     try {
       const result = await runPipeline({
         root: options.root,
@@ -87,28 +107,29 @@ async function runTaskWithRetries(
       }
       if (result.status !== 'completed') throw new Error(`Task ${task.id} did not complete`);
       task.status = 'completed';
-      await saveProjectState(statePath, state);
+      await persist(state);
       return { status: 'completed' };
     } catch (error) {
       const decision = decideRetry({ attempts: attempt, maxAttempts, error });
       if (!decision.retry) {
         task.status = 'failed';
-        await saveProjectState(statePath, state);
+        await persist(state);
         return { status: 'failed', error };
       }
       task.status = 'ready';
-      await saveProjectState(statePath, state);
+      await persist(state);
     }
   }
 
   task.status = 'failed';
-  await saveProjectState(statePath, state);
+  await persist(state);
   return { status: 'failed', error: new Error(`Task ${task.id} exhausted its attempt limit`) };
 }
 
 export async function runProject(options: ProjectRunnerOptions): Promise<ProjectRunResult> {
   const statePath = options.statePath ?? join(options.root, '.klin', 'project.json');
   const state = await loadProjectState(statePath);
+  const persist = createStateWriter(statePath);
   const manifest = await scanProject(options.root);
   const completedTaskIds: string[] = [];
   let executed = 0;
@@ -133,7 +154,7 @@ export async function runProject(options: ProjectRunnerOptions): Promise<Project
       const selectedFiles = expandContext(manifest, task, 2);
       if (!selectedFiles.length) {
         task.status = 'failed';
-        await saveProjectState(statePath, state);
+        await persist(state);
         return { status: 'failed', completedTaskIds, failedTaskId: task.id, remainingTaskIds: state.tasks.filter(t => t.status !== 'completed').map(t => t.id) };
       }
       prepared.push({ task, selectedFiles });
@@ -144,7 +165,7 @@ export async function runProject(options: ProjectRunnerOptions): Promise<Project
     }
 
     const results = await Promise.all(prepared.map(({ task, selectedFiles }) =>
-      runTaskWithRetries(task, selectedFiles, options, state, statePath),
+      runTaskWithRetries(task, selectedFiles, options, state, persist),
     ));
 
     for (let index = 0; index < results.length; index += 1) {
