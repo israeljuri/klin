@@ -8,6 +8,7 @@
     "coding-experiment": "tsx src/coding-experiment.ts",
     "pipeline:dry": "tsx src/run-pipeline.ts --dry-run",
     "pipeline:live": "KLIN_LIVE=1 tsx src/run-pipeline.ts",
+    "project:parallel": "tsx src/run-project-parallel.ts",
     "test:unit": "tsx --test src/*.test.ts"
   },
   "dependencies": {
