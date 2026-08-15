@@ -1,0 +1,9 @@
+{
+  "id": "apply-discount-live-001",
+  "description": "Implement applyDiscount in the pricing module. Validate that discountPercent is between 0 and 100 inclusive, calculate the cart subtotal using subtotalCents, apply the percentage discount, and return a whole number of cents rounded to the nearest cent. Add focused tests for 100%, rounding, and non-mutation. Do not change unrelated behavior.",
+  "files": [
+    "lab/coding-task/src/pricing.js",
+    "lab/coding-task/src/pricing.test.js"
+  ],
+  "test_command": "pnpm --dir lab/coding-task test"
+}
