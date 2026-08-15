@@ -2,7 +2,7 @@ import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { assembleContext, buildModelPrompt, type Model, type Task, type TaskResult } from './orchestrator.js';
 import { estimateContext, assertContextWithinLimit } from './context-budget.js';
-import { appendLedger, estimateCostUsd, loadLedger, assertWithinBudget, type LedgerEntry } from './ledger.js';
+import { appendLedger, estimateCostUsd, assertWithinBudget, loadLedger, BudgetCoordinator, type LedgerEntry } from './ledger.js';
 import { createResponsesAdapter } from './model-adapter.js';
 import { reconcileAndVerify, type Edit } from './reconcile.js';
 
@@ -16,6 +16,7 @@ export type PipelineOptions = {
   outputRatePerMillion?: number;
   contextMaxCharacters?: number;
   dryRun?: boolean;
+  budgetCoordinator?: BudgetCoordinator;
 };
 
 export async function runPipeline(options: PipelineOptions): Promise<TaskResult> {
@@ -25,13 +26,26 @@ export async function runPipeline(options: PipelineOptions): Promise<TaskResult>
 
   const ledger = await loadLedger(options.root);
   const spent = ledger.reduce((sum, entry) => sum + entry.estimated_cost_usd, 0);
-  if (options.budgetUsd !== undefined && options.inputRatePerMillion !== undefined && options.outputRatePerMillion !== undefined) {
-    const estimatedInputCost = estimate.estimated_input_tokens * options.inputRatePerMillion / 1_000_000;
-    assertWithinBudget({ limit_usd: options.budgetUsd, spent_usd: spent }, estimatedInputCost);
+  const hasRates = options.inputRatePerMillion !== undefined && options.outputRatePerMillion !== undefined;
+  const estimatedInputCost = hasRates ? estimate.estimated_input_tokens * options.inputRatePerMillion! / 1_000_000 : 0;
+  let reservation = 0;
+
+  if (options.budgetUsd !== undefined && hasRates) {
+    if (options.budgetCoordinator) {
+      reservation = await options.budgetCoordinator.reserve(estimatedInputCost);
+    } else {
+      assertWithinBudget({ limit_usd: options.budgetUsd, spent_usd: spent }, estimatedInputCost);
+    }
   }
 
   const prompt = buildModelPrompt({ task: options.task, context });
-  const modelResult = await options.model({ task: options.task, context, prompt });
+  let modelResult: Awaited<ReturnType<Model>>;
+  try {
+    modelResult = await options.model({ task: options.task, context, prompt });
+  } catch (error) {
+    if (reservation && options.budgetCoordinator) await options.budgetCoordinator.settle(reservation, 0);
+    throw error;
+  }
 
   if (options.dryRun) {
     return { task_id: options.task.id, status: 'pending-model', context, model_usage: modelResult.usage, response_id: modelResult.response_id };
@@ -40,16 +54,16 @@ export async function runPipeline(options: PipelineOptions): Promise<TaskResult>
   try {
     const verification = await reconcileAndVerify(modelResult.edits, options.root, options.task.test_command ?? 'node --test');
     const usage = modelResult.usage;
-    const cost = usage && options.inputRatePerMillion !== undefined && options.outputRatePerMillion !== undefined
-      ? estimateCostUsd(usage, options.inputRatePerMillion, options.outputRatePerMillion) : 0;
-    // The model's actual usage is authoritative. We never reject after applying verified edits,
-    // because doing so would leave a successful change in place while reporting a budget failure.
+    const cost = usage && hasRates
+      ? estimateCostUsd(usage, options.inputRatePerMillion!, options.outputRatePerMillion!) : 0;
+    if (options.budgetCoordinator) await options.budgetCoordinator.settle(reservation, cost);
     await appendLedger(options.root, makeLedgerEntry(options, 'completed', cost, usage, verification.result.changed_files, context.characters));
     return { task_id: options.task.id, status: 'completed', context, model_usage: usage, response_id: modelResult.response_id, changed_files: verification.result.changed_files };
   } catch (error) {
     const usage = modelResult.usage;
-    const cost = usage && options.inputRatePerMillion !== undefined && options.outputRatePerMillion !== undefined
-      ? estimateCostUsd(usage, options.inputRatePerMillion, options.outputRatePerMillion) : 0;
+    const cost = usage && hasRates
+      ? estimateCostUsd(usage, options.inputRatePerMillion!, options.outputRatePerMillion!) : 0;
+    if (options.budgetCoordinator) await options.budgetCoordinator.settle(reservation, cost);
     await appendLedger(options.root, makeLedgerEntry(options, 'failed', cost, usage, [], context.characters, error instanceof Error ? error.message : String(error)));
     throw error;
   }
