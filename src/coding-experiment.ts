@@ -31,6 +31,7 @@ type ApiResponse = {
 };
 
 const fixtureRoot = join(process.cwd(), 'lab', 'coding-task');
+const resultsRoot = join(process.cwd(), 'results');
 
 const files = [
   'ARCHITECTURE.md',
@@ -66,6 +67,49 @@ function extractText(data: ApiResponse): string {
     .map((item) => item.text ?? '')
     .filter(Boolean)
     .join('');
+}
+
+function normalizePatch(raw: string): string {
+  let patch = raw.replace(/^```(?:diff|patch)?\s*/i, '').replace(/\s*```\s*$/i, '');
+  patch = patch.replace(/^\s*Here(?:'s| is) the (?:unified )?diff:?\s*/i, '');
+  patch = patch.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+
+  const diffIndex = patch.indexOf('diff --git ');
+  if (diffIndex > 0) patch = patch.slice(diffIndex);
+
+  return patch.trimEnd() + '\n';
+}
+
+function validatePatch(patch: string): { valid: boolean; reason?: string } {
+  if (!patch.trim()) return { valid: false, reason: 'empty_patch' };
+  if (!patch.includes('diff --git ')) return { valid: false, reason: 'missing_diff_header' };
+  if (!/^diff --git a\/\S+ b\/\S+/m.test(patch)) {
+    return { valid: false, reason: 'invalid_diff_header' };
+  }
+  if (!/^--- /m.test(patch) || !/^\+\+\+ /m.test(patch)) {
+    return { valid: false, reason: 'missing_file_headers' };
+  }
+  if (!/^@@ /m.test(patch)) return { valid: false, reason: 'missing_hunk_header' };
+  return { valid: true };
+}
+
+async function runGitApplyCheck(patchFile: string): Promise<{ valid: boolean; output: string }> {
+  const { execFile } = await import('node:child_process');
+  const { promisify } = await import('node:util');
+  const execFileAsync = promisify(execFile);
+
+  try {
+    const result = await execFileAsync('git', ['apply', '--check', patchFile], {
+      cwd: process.cwd(),
+    });
+    return { valid: true, output: `${result.stdout}${result.stderr}`.trim() };
+  } catch (error) {
+    const e = error as { stdout?: string; stderr?: string; message?: string };
+    return {
+      valid: false,
+      output: `${e.stdout ?? ''}${e.stderr ?? ''}`.trim() || e.message || 'git apply --check failed',
+    };
+  }
 }
 
 async function main() {
@@ -123,7 +167,22 @@ async function main() {
   }
 
   const usage = usageOf(data);
-  const patch = extractText(data);
+  const rawOutput = extractText(data);
+  const patch = normalizePatch(rawOutput);
+  const structuralValidation = validatePatch(patch);
+
+  await mkdir(resultsRoot, { recursive: true });
+  await writeFile(join(resultsRoot, 'coding-task-raw-response.json'), raw + '\n');
+  await writeFile(join(resultsRoot, 'coding-task.patch'), patch);
+
+  let applyCheck = { valid: false, output: 'not_run' };
+  if (structuralValidation.valid) {
+    applyCheck = await runGitApplyCheck(join(resultsRoot, 'coding-task.patch'));
+  } else {
+    applyCheck = { valid: false, output: `Structural validation failed: ${structuralValidation.reason}` };
+  }
+
+  const patchValid = structuralValidation.valid && applyCheck.valid;
 
   console.log(`HTTP ${response.status} ${data.status ?? ''}`);
   console.log(`Response ID: ${data.id ?? 'unknown'}`);
@@ -132,12 +191,13 @@ async function main() {
   console.log(`Output tokens: ${usage.output_tokens.toLocaleString()}`);
   console.log(`Reasoning tokens: ${usage.reasoning_tokens.toLocaleString()}`);
   console.log(`Total tokens: ${usage.total_tokens.toLocaleString()}`);
-  console.log(`Returned patch characters: ${patch.length.toLocaleString()}`);
+  console.log(`Returned output characters: ${rawOutput.length.toLocaleString()}`);
+  console.log(`Normalized patch characters: ${patch.length.toLocaleString()}`);
+  console.log(`Patch validation: ${patchValid ? 'PASS' : 'FAIL'}`);
+  if (!applyCheck.valid) console.log(`git apply --check: ${applyCheck.output}`);
 
-  await mkdir(join(process.cwd(), 'results'), { recursive: true });
-  await writeFile(join(process.cwd(), 'results', 'coding-task.patch'), patch + '\n');
   await writeFile(
-    join(process.cwd(), 'results', 'coding-task-report.json'),
+    join(resultsRoot, 'coding-task-report.json'),
     JSON.stringify(
       {
         generated_at: new Date().toISOString(),
@@ -149,12 +209,19 @@ async function main() {
         prompt_characters: prompt.length,
         response_id: data.id,
         usage,
+        raw_output_characters: rawOutput.length,
         patch_characters: patch.length,
         patch_file: 'results/coding-task.patch',
+        validation: {
+          structural: structuralValidation,
+          git_apply_check: applyCheck,
+          patch_valid: patchValid,
+        },
         notes: [
-          'The model was explicitly required to return a unified git diff only.',
-          'Klin does not automatically apply the patch in this experiment.',
-          'Run git apply --check results/coding-task.patch before applying it.',
+          'Klin saves the raw API response separately from the normalized patch.',
+          'Klin strips accidental markdown fences/preamble before validation.',
+          'Klin runs git apply --check automatically and never applies the patch.',
+          'A patch must pass both structural validation and git apply --check to be considered valid.',
         ],
       },
       null,
@@ -163,10 +230,10 @@ async function main() {
   );
 
   console.log('\nResults written:');
+  console.log('  results/coding-task-raw-response.json');
   console.log('  results/coding-task.patch');
   console.log('  results/coding-task-report.json');
-  console.log('\nNext safety check:');
-  console.log('  git apply --check results/coding-task.patch');
+  console.log('\nPatch was NOT applied.');
 }
 
 main().catch((error) => {
