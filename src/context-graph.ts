@@ -6,7 +6,17 @@ function resolveImport(from: string, specifier: string, available: Set<string>):
   if (!specifier.startsWith('.')) return undefined;
   const base = from.split('/').slice(0, -1).join('/');
   const raw = posix.normalize(base ? `${base}/${specifier}` : specifier);
-  const candidates = [raw, `${raw}.ts`, `${raw}.tsx`, `${raw}.js`, `${raw}.jsx`, `${raw}/index.ts`, `${raw}/index.js`];
+  const extensionless = raw.replace(/\.(?:js|jsx|mjs|cjs|ts|tsx)$/, '');
+  const candidates = [
+    raw,
+    extensionless,
+    `${extensionless}.ts`,
+    `${extensionless}.tsx`,
+    `${extensionless}.js`,
+    `${extensionless}.jsx`,
+    `${extensionless}/index.ts`,
+    `${extensionless}/index.js`,
+  ];
   return candidates.find(candidate => available.has(candidate));
 }
 
