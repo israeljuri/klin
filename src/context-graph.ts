@@ -1,10 +1,11 @@
 import type { ProjectManifest } from './project-brain.js';
 import type { Task } from './task-graph.js';
+import { posix } from 'node:path';
 
 function resolveImport(from: string, specifier: string, available: Set<string>): string | undefined {
   if (!specifier.startsWith('.')) return undefined;
   const base = from.split('/').slice(0, -1).join('/');
-  const raw = base ? `${base}/${specifier}` : specifier.slice(2);
+  const raw = posix.normalize(base ? `${base}/${specifier}` : specifier);
   const candidates = [raw, `${raw}.ts`, `${raw}.tsx`, `${raw}.js`, `${raw}.jsx`, `${raw}/index.ts`, `${raw}/index.js`];
   return candidates.find(candidate => available.has(candidate));
 }
