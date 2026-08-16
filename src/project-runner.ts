@@ -109,7 +109,7 @@ export async function runProject(options: ProjectRunnerOptions): Promise<Project
   const maxTasks = options.maxTasks ?? Number.MAX_SAFE_INTEGER;
   const budgetConfigured = options.budgetUsd !== undefined && options.inputRatePerMillion !== undefined && options.outputRatePerMillion !== undefined;
   const existingLedger = budgetConfigured ? await loadLedger(options.root) : [];
-  const existingSpend = existingLedger.reduce((sum, entry) => sum + entry.estimated_cost_usd, 0);
+  const existingSpend = existingLedger.reduce((sum, entry) => sum + (entry.actual_cost_usd ?? entry.estimated_cost_usd), 0);
   const budgetCoordinator = budgetConfigured ? new BudgetCoordinator(options.budgetUsd!, existingSpend) : undefined;
 
   while (executed < maxTasks) {
