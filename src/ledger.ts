@@ -23,8 +23,18 @@ export type Budget = { limit_usd: number; spent_usd: number; remaining_usd: numb
 export type BudgetGuard = { limit_usd: number; spent_usd: number };
 export const LEDGER_FILE = join('.klin', 'ledger.json');
 
-export function estimateCostUsd(usage: ModelUsage, inputRatePerMillion: number, outputRatePerMillion: number): number {
-  return (usage.input_tokens * inputRatePerMillion + usage.output_tokens * outputRatePerMillion) / 1_000_000;
+export function estimateCostUsd(
+  usage: ModelUsage,
+  inputRatePerMillion: number,
+  outputRatePerMillion: number,
+  cachedInputRatePerMillion = inputRatePerMillion,
+): number {
+  const nonCachedInputTokens = Math.max(0, usage.input_tokens - usage.cached_tokens);
+  return (
+    nonCachedInputTokens * inputRatePerMillion
+    + usage.cached_tokens * cachedInputRatePerMillion
+    + usage.output_tokens * outputRatePerMillion
+  ) / 1_000_000;
 }
 
 export function assertWithinBudget(guard: BudgetGuard, estimatedAdditionalCostUsd: number): void {
