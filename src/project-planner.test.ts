@@ -9,13 +9,17 @@ const manifest: ProjectManifest = {
     { path: 'src/a.js', characters: 10, extension: '.js', imports: [] },
     { path: 'src/b.js', characters: 20, extension: '.js', imports: ['./a.js'] },
   ],
+  packages: [{ path: 'package.json', scripts: { test: 'node --test' } }],
+  documents: [{ path: 'README.md', content: 'Percentage discounts only. Preserve existing behavior.' }],
 };
 
-test('planner prompt contains goal and only manifest paths', () => {
+test('planner prompt contains goal, repository contracts, and only manifest paths', () => {
   const prompt = buildPlannerPrompt('Add validation to the cart', manifest);
   assert.match(prompt, /Add validation to the cart/);
   assert.match(prompt, /src\/a\.js/);
   assert.match(prompt, /src\/b\.js/);
+  assert.match(prompt, /Percentage discounts only/);
+  assert.match(prompt, /test_command must be executable from the repository root/);
   assert.doesNotMatch(prompt, /node_modules/);
 });
 

@@ -18,6 +18,8 @@ export type PlannerModel = (request: PlannerRequest) => Promise<PlannerResult>;
 
 export function buildPlannerPrompt(goal: string, manifest: ProjectManifest): string {
   const files = manifest.files.map(file => ({ path: file.path, characters: file.characters, imports: file.imports }));
+  const packages = manifest.packages ?? [];
+  const documents = manifest.documents ?? [];
   return [
     "You are Klin's project planning model.",
     'Turn the project goal into the smallest executable task graph that can complete it.',
@@ -25,7 +27,13 @@ export function buildPlannerPrompt(goal: string, manifest: ProjectManifest): str
     'Prefer independent tasks when they can safely touch different files.',
     'Use dependencies only when a task genuinely requires another task first.',
     'Every task must list only files that exist in the supplied manifest.',
-    'Do not invent files, tests, dependencies, APIs, or requirements.',
+    'Treat supplied repository documentation and package scripts as authoritative project context.',
+    'Do not invent requirements, behavior, APIs, test cases, or new semantics that are not supported by the goal or repository context.',
+    'When the goal is underspecified, preserve existing behavior and make the smallest change that satisfies it.',
+    'Do not claim support for additional modes (for example fixed discounts when only percentage discounts are described) unless the repository context explicitly requires them.',
+    'Every test_command must be executable from the repository root.',
+    'Prefer node --test with repository-relative test paths when no package test script is declared.',
+    'For a nested package with an npm script, use npm --prefix <package-dir> <script> -- <path relative to that package> so the command remains valid from the repository root.',
     'Keep the number of tasks minimal while preserving safe parallelism.',
     '',
     'PROJECT GOAL', goal,
@@ -35,6 +43,12 @@ export function buildPlannerPrompt(goal: string, manifest: ProjectManifest): str
     '{"tasks":[{"id":"stable-task-id","title":"short title","description":"precise implementation work","files":["relative/path"],"test_command":"optional command","dependencies":["other-task-id"]}]}',
     'Use lowercase kebab-case task IDs when possible; simple alphanumeric/camelCase IDs are also accepted.',
     'IDs must be unique and dependencies must refer to task IDs in this same response.',
+    '',
+    'PROJECT PACKAGES',
+    JSON.stringify(packages, null, 2),
+    '',
+    'PROJECT DOCUMENTATION',
+    JSON.stringify(documents, null, 2),
     '',
     'PROJECT MANIFEST',
     JSON.stringify(files, null, 2),
