@@ -14,7 +14,7 @@ export type LedgerEntry = {
   reasoning_tokens: number;
   total_tokens: number;
   estimated_cost_usd: number;
-  actual_cost_usd: number;
+  actual_cost_usd?: number;
   changed_files: string[];
   error?: string;
 };
