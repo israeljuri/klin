@@ -1,0 +1,10 @@
+{
+  "id": "checkout-total-cost-success-001",
+  "title": "Implement checkout total with discount and tax",
+  "description": "Implement orderTotalCents in lab/coding-task/src/checkout.js for a small e-commerce checkout. Calculate the cart subtotal, apply the supplied percentage discount, then apply the supplied percentage tax to the discounted subtotal. Return integer cents using normal rounding and preserve the cart input without mutation. Keep the implementation focused on checkout.js and do not refactor unrelated modules.",
+  "files": [
+    "lab/coding-task/src/checkout.js"
+  ],
+  "dependencies": [],
+  "test_command": "npm --prefix lab/coding-task test -- src/checkout.test.js"
+}
