@@ -27,6 +27,22 @@ if (!Number.isInteger(concurrency) || concurrency < 1) {
 }
 
 const selected = dryRun ? createDryRunModel() : createLiveModelFromEnv();
+const isContributor = selected.modelName === 'muse-spark-1.2-contributor';
+const inputRatePerMillion = process.env.KLIN_INPUT_RATE_PER_MILLION
+  ? Number(process.env.KLIN_INPUT_RATE_PER_MILLION)
+  : isContributor ? 0.10 : undefined;
+const cachedInputRatePerMillion = process.env.KLIN_CACHED_INPUT_RATE_PER_MILLION
+  ? Number(process.env.KLIN_CACHED_INPUT_RATE_PER_MILLION)
+  : isContributor ? 0.002 : undefined;
+const outputRatePerMillion = process.env.KLIN_OUTPUT_RATE_PER_MILLION
+  ? Number(process.env.KLIN_OUTPUT_RATE_PER_MILLION)
+  : isContributor ? 0.20 : undefined;
+
+if (!dryRun && (inputRatePerMillion === undefined || outputRatePerMillion === undefined)) {
+  console.error('Cost accounting rates are not configured for this model. Set KLIN_INPUT_RATE_PER_MILLION and KLIN_OUTPUT_RATE_PER_MILLION.');
+  process.exit(2);
+}
+
 const result = await runProject({
   root,
   model: selected.model,
@@ -34,11 +50,22 @@ const result = await runProject({
   dryRun,
   concurrency,
   budgetUsd: process.env.KLIN_BUDGET_USD ? Number(process.env.KLIN_BUDGET_USD) : undefined,
-  inputRatePerMillion: process.env.KLIN_INPUT_RATE_PER_MILLION ? Number(process.env.KLIN_INPUT_RATE_PER_MILLION) : undefined,
-  outputRatePerMillion: process.env.KLIN_OUTPUT_RATE_PER_MILLION ? Number(process.env.KLIN_OUTPUT_RATE_PER_MILLION) : undefined,
+  inputRatePerMillion,
+  cachedInputRatePerMillion,
+  outputRatePerMillion,
   contextMaxCharacters: process.env.KLIN_CONTEXT_MAX_CHARS ? Number(process.env.KLIN_CONTEXT_MAX_CHARS) : undefined,
   maxTasks: process.env.KLIN_MAX_TASKS ? Number(process.env.KLIN_MAX_TASKS) : undefined,
   maxAttemptsPerTask: process.env.KLIN_MAX_ATTEMPTS ? Number(process.env.KLIN_MAX_ATTEMPTS) : undefined,
 });
 
-console.log(JSON.stringify({ mode: dryRun ? 'dry-run' : 'live', model: selected.modelName, concurrency, ...result }, null, 2));
+console.log(JSON.stringify({
+  mode: dryRun ? 'dry-run' : 'live',
+  model: selected.modelName,
+  concurrency,
+  pricing: {
+    input_per_million_usd: inputRatePerMillion,
+    cached_input_per_million_usd: cachedInputRatePerMillion,
+    output_per_million_usd: outputRatePerMillion,
+  },
+  ...result,
+}, null, 2));

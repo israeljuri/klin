@@ -9,7 +9,7 @@ import { BudgetCoordinator, loadLedger } from './ledger.js';
 
 export type ProjectRunnerOptions = {
   root: string; statePath?: string; model: Model; modelName: string; budgetUsd?: number;
-  inputRatePerMillion?: number; outputRatePerMillion?: number; contextMaxCharacters?: number;
+  inputRatePerMillion?: number; cachedInputRatePerMillion?: number; outputRatePerMillion?: number; contextMaxCharacters?: number;
   dryRun?: boolean; maxTasks?: number; maxAttemptsPerTask?: number; concurrency?: number;
 };
 export type ProjectRunResult = {
@@ -75,6 +75,7 @@ async function runTaskWithRetries(task: GraphTask, selectedFiles: string[], opti
         modelName: options.modelName,
         budgetUsd: options.budgetUsd,
         inputRatePerMillion: options.inputRatePerMillion,
+        cachedInputRatePerMillion: options.cachedInputRatePerMillion,
         outputRatePerMillion: options.outputRatePerMillion,
         contextMaxCharacters: options.contextMaxCharacters,
         dryRun: options.dryRun,
@@ -109,7 +110,7 @@ export async function runProject(options: ProjectRunnerOptions): Promise<Project
   const maxTasks = options.maxTasks ?? Number.MAX_SAFE_INTEGER;
   const budgetConfigured = options.budgetUsd !== undefined && options.inputRatePerMillion !== undefined && options.outputRatePerMillion !== undefined;
   const existingLedger = budgetConfigured ? await loadLedger(options.root) : [];
-  const existingSpend = existingLedger.reduce((sum, entry) => sum + entry.estimated_cost_usd, 0);
+  const existingSpend = existingLedger.reduce((sum, entry) => sum + (entry.actual_cost_usd ?? entry.estimated_cost_usd), 0);
   const budgetCoordinator = budgetConfigured ? new BudgetCoordinator(options.budgetUsd!, existingSpend) : undefined;
 
   while (executed < maxTasks) {

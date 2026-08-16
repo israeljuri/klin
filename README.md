@@ -4,16 +4,27 @@ Klin is a controlled experiment for measuring Muse Spark 1.2 Contributor API usa
 
 ## Cost estimates vs. actual cost
 
-Klin can estimate the expected cost of a task before execution. **The estimate is not the final cost.**
+Klin calculates an **estimate before execution** and records the **actual model cost after execution**. They are intentionally separate because they can differ.
 
-After the task runs, Klin records the model's actual returned token usage and resulting cost in the ledger. The final recorded cost can therefore be different from the estimate.
+- **Estimate:** a planning-time prediction based on expected input-token usage and the configured input rate. It is used for budget reservation.
+- **Actual cost:** calculated after the model responds from returned input, cached-input, and output token usage and the configured rates.
+- **Ledger:** stores both `estimated_cost_usd` and `actual_cost_usd` for each executed task. Actual cost is the source of truth for money spent.
 
-In short:
+So the flow is:
 
-- **Estimate:** what Klin predicts the task will cost before it runs.
-- **Actual cost:** what the model usage shows the task actually cost after it runs.
+**estimate → approve/reserve budget → execute → receive actual usage → calculate actual cost → record both.**
 
-Use the estimate for planning and budget decisions; use the ledger's recorded usage/cost as the source of truth after execution.
+Use the estimate for planning and budget decisions; use actual cost for reporting and accounting.
+
+### Muse Spark 1.2 Contributor pricing
+
+Klin has built-in defaults for `muse-spark-1.2-contributor` so live runs do not silently record `$0` just because pricing variables were omitted:
+
+- Input: **$0.10 / 1M tokens**
+- Cached input: **$0.002 / 1M tokens**
+- Output: **$0.20 / 1M tokens**
+
+You can override these with `KLIN_INPUT_RATE_PER_MILLION`, `KLIN_CACHED_INPUT_RATE_PER_MILLION`, and `KLIN_OUTPUT_RATE_PER_MILLION`. Other models must provide explicit input/output rates.
 
 ## Local setup
 

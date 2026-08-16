@@ -14,6 +14,7 @@ export type LedgerEntry = {
   reasoning_tokens: number;
   total_tokens: number;
   estimated_cost_usd: number;
+  actual_cost_usd?: number;
   changed_files: string[];
   error?: string;
 };
@@ -22,8 +23,18 @@ export type Budget = { limit_usd: number; spent_usd: number; remaining_usd: numb
 export type BudgetGuard = { limit_usd: number; spent_usd: number };
 export const LEDGER_FILE = join('.klin', 'ledger.json');
 
-export function estimateCostUsd(usage: ModelUsage, inputRatePerMillion: number, outputRatePerMillion: number): number {
-  return (usage.input_tokens * inputRatePerMillion + usage.output_tokens * outputRatePerMillion) / 1_000_000;
+export function estimateCostUsd(
+  usage: ModelUsage,
+  inputRatePerMillion: number,
+  outputRatePerMillion: number,
+  cachedInputRatePerMillion = inputRatePerMillion,
+): number {
+  const nonCachedInputTokens = Math.max(0, usage.input_tokens - usage.cached_tokens);
+  return (
+    nonCachedInputTokens * inputRatePerMillion
+    + usage.cached_tokens * cachedInputRatePerMillion
+    + usage.output_tokens * outputRatePerMillion
+  ) / 1_000_000;
 }
 
 export function assertWithinBudget(guard: BudgetGuard, estimatedAdditionalCostUsd: number): void {
@@ -64,7 +75,7 @@ export class BudgetCoordinator {
 }
 
 export function budgetSummary(limitUsd: number, entries: LedgerEntry[]): Budget {
-  const spent_usd = entries.reduce((sum, entry) => sum + entry.estimated_cost_usd, 0);
+  const spent_usd = entries.reduce((sum, entry) => sum + (entry.actual_cost_usd ?? entry.estimated_cost_usd), 0);
   return { limit_usd: limitUsd, spent_usd, remaining_usd: Math.max(0, limitUsd - spent_usd) };
 }
 
