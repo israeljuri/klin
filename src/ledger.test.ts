@@ -29,10 +29,10 @@ test('assertWithinBudget rejects work that would exceed the limit', () => {
   );
 });
 
-test('budgetSummary aggregates ledger costs', () => {
+test('budgetSummary aggregates actual ledger costs', () => {
   const summary = budgetSummary(1, [
-    { task_id: 'a', status: 'completed', attempts: 1, context_characters: 100, input_tokens: 10, cached_tokens: 0, output_tokens: 20, reasoning_tokens: 10, total_tokens: 30, estimated_cost_usd: 0.1, changed_files: [] },
-    { task_id: 'b', status: 'failed', attempts: 2, context_characters: 200, input_tokens: 30, cached_tokens: 5, output_tokens: 40, reasoning_tokens: 20, total_tokens: 70, estimated_cost_usd: 0.25, changed_files: [], error: 'test failure' },
+    { task_id: 'a', status: 'completed', attempts: 1, context_characters: 100, input_tokens: 10, cached_tokens: 0, output_tokens: 20, reasoning_tokens: 10, total_tokens: 30, estimated_cost_usd: 0.1, actual_cost_usd: 0.15, changed_files: [] },
+    { task_id: 'b', status: 'failed', attempts: 2, context_characters: 200, input_tokens: 30, cached_tokens: 5, output_tokens: 40, reasoning_tokens: 20, total_tokens: 70, estimated_cost_usd: 0.25, actual_cost_usd: 0.2, changed_files: [], error: 'test failure' },
   ]);
   assert.equal(summary.spent_usd, 0.35);
   assert.equal(summary.remaining_usd, 0.65);
@@ -52,11 +52,13 @@ test('ledger persists entries locally', async () => {
       reasoning_tokens: 5,
       total_tokens: 30,
       estimated_cost_usd: 0.001,
+      actual_cost_usd: 0.0012,
       changed_files: ['src/a.ts'],
     });
     const entries = await loadLedger(root);
     assert.equal(entries.length, 1);
     assert.equal(entries[0].task_id, 'demo');
+    assert.equal(entries[0].actual_cost_usd, 0.0012);
     assert.match(await readFile(join(root, '.klin', 'ledger.json'), 'utf8'), /demo/);
   } finally {
     await rm(root, { recursive: true, force: true });
