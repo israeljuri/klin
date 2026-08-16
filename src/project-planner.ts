@@ -1,4 +1,5 @@
 import type { ProjectManifest } from './project-brain.js';
+import type { ProjectState } from './task-graph.js';
 
 export type PlannedTask = {
   id: string;
@@ -66,6 +67,22 @@ export function validateProjectPlan(plan: ProjectPlan, manifest: ProjectManifest
 
   assertAcyclic(plan.tasks);
   return plan;
+}
+
+export function projectPlanToState(plan: ProjectPlan): ProjectState {
+  return {
+    milestones: [],
+    tasks: plan.tasks.map(task => ({
+      id: task.id,
+      title: task.title,
+      description: task.description,
+      dependencies: [...task.dependencies],
+      files: [...task.files],
+      test_command: task.test_command,
+      status: 'ready' as const,
+      attempts: 0,
+    })),
+  };
 }
 
 function assertAcyclic(tasks: PlannedTask[]): void {
