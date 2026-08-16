@@ -2,6 +2,19 @@
 
 Klin is a controlled experiment for measuring Muse Spark 1.2 Contributor API usage, token accounting, prompt caching, and eventually the logic-first coding workflow.
 
+## Cost estimates vs. actual cost
+
+Klin can estimate the expected cost of a task before execution. **The estimate is not the final cost.**
+
+After the task runs, Klin records the model's actual returned token usage and resulting cost in the ledger. The final recorded cost can therefore be different from the estimate.
+
+In short:
+
+- **Estimate:** what Klin predicts the task will cost before it runs.
+- **Actual cost:** what the model usage shows the task actually cost after it runs.
+
+Use the estimate for planning and budget decisions; use the ledger's recorded usage/cost as the source of truth after execution.
+
 ## Local setup
 
 ```bash

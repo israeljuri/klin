@@ -1,9 +1,8 @@
 import 'dotenv/config';
-import { resolve } from 'node:path';
+import { resolve, join } from 'node:path';
 import { scanProject } from './project-brain.js';
-import { createPlannerAdapter, planProject } from './project-planner.js';
-import { mkdir, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { createPlannerAdapter, createProjectState, planProject } from './project-planner.js';
+import { mkdir, writeFile, readdir, unlink } from 'node:fs/promises';
 
 const args = process.argv.slice(2);
 const confirmSpend = args.includes('--confirm-spend');
@@ -37,8 +36,16 @@ const result = await planProject(goal, manifest, model);
 
 const tasksDir = join(root, 'tasks');
 await mkdir(tasksDir, { recursive: true });
+const taskFiles = new Set(result.plan.tasks.map(task => `${task.id}.json`));
+for (const file of await readdir(tasksDir)) {
+  if (file.endsWith('.json') && !taskFiles.has(file)) await unlink(join(tasksDir, file));
+}
 for (const task of result.plan.tasks) {
   await writeFile(join(tasksDir, `${task.id}.json`), JSON.stringify({ ...task, dependencies: task.dependencies }, null, 2) + '\n');
 }
 
-console.log(JSON.stringify({ mode: 'live', model: process.env.KLIN_MODEL ?? 'muse-spark-1.2-contributor', taskCount: result.plan.tasks.length, taskIds: result.plan.tasks.map(task => task.id), usage: result.usage, responseId: result.response_id }, null, 2));
+const statePath = join(root, '.klin', 'project.json');
+await mkdir(join(root, '.klin'), { recursive: true });
+await writeFile(statePath, JSON.stringify(createProjectState(result.plan), null, 2) + '\n');
+
+console.log(JSON.stringify({ mode: 'live', model: process.env.KLIN_MODEL ?? 'muse-spark-1.2-contributor', taskCount: result.plan.tasks.length, taskIds: result.plan.tasks.map(task => task.id), statePath, usage: result.usage, responseId: result.response_id }, null, 2));
