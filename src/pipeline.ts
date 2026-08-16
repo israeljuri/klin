@@ -8,7 +8,7 @@ import { reconcileAndVerify, type Edit } from './reconcile.js';
 
 export type PipelineOptions = {
   root: string; task: Task; model: Model; modelName: string; budgetUsd?: number;
-  inputRatePerMillion?: number; outputRatePerMillion?: number; contextMaxCharacters?: number;
+  inputRatePerMillion?: number; cachedInputRatePerMillion?: number; outputRatePerMillion?: number; contextMaxCharacters?: number;
   dryRun?: boolean; budgetCoordinator?: BudgetCoordinator;
 };
 
@@ -67,13 +67,17 @@ export async function runPipeline(options: PipelineOptions): Promise<TaskResult>
   try {
     const verification = await reconcileAndVerify(modelResult.edits, options.root, options.task.test_command ?? 'node --test');
     const usage = modelResult.usage;
-    const actualCostUsd = usage && hasRates ? estimateCostUsd(usage, options.inputRatePerMillion!, options.outputRatePerMillion!) : 0;
+    const actualCostUsd = usage && hasRates
+      ? estimateCostUsd(usage, options.inputRatePerMillion!, options.outputRatePerMillion!, options.cachedInputRatePerMillion)
+      : 0;
     if (options.budgetCoordinator) await options.budgetCoordinator.settle(reservation, actualCostUsd);
     await appendLedger(options.root, makeLedgerEntry(options, 'completed', estimatedCostUsd, actualCostUsd, usage, verification.result.changed_files, context.characters));
     return { task_id: options.task.id, status: 'completed', context, model_usage: usage, response_id: modelResult.response_id, changed_files: verification.result.changed_files, estimated_cost_usd: estimatedCostUsd, actual_cost_usd: actualCostUsd };
   } catch (error) {
     const usage = modelResult.usage;
-    const actualCostUsd = usage && hasRates ? estimateCostUsd(usage, options.inputRatePerMillion!, options.outputRatePerMillion!) : 0;
+    const actualCostUsd = usage && hasRates
+      ? estimateCostUsd(usage, options.inputRatePerMillion!, options.outputRatePerMillion!, options.cachedInputRatePerMillion)
+      : 0;
     if (options.budgetCoordinator) await options.budgetCoordinator.settle(reservation, actualCostUsd);
     await appendLedger(options.root, makeLedgerEntry(options, 'failed', estimatedCostUsd, actualCostUsd, usage, [], context.characters, error instanceof Error ? error.message : String(error)));
     throw error;
