@@ -1,16 +1,21 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 import { mkdtemp, readFile, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createDryRunModel, loadTask, runPipeline } from './pipeline.js';
 import { loadLedger } from './ledger.js';
 
+const execFileAsync = promisify(execFile);
+
 async function fixture() {
   const root = await mkdtemp(join(tmpdir(), 'klin-pipeline-'));
   await writeFile(join(root, 'pricing.js'), "export function applyDiscount() { throw new Error('TODO'); }\n");
   await writeFile(join(root, 'pricing.test.js'), "import test from 'node:test';\nimport assert from 'node:assert/strict';\nimport { applyDiscount } from './pricing.js';\ntest('discount', () => assert.equal(applyDiscount(), 10));\n");
   await writeFile(join(root, 'package.json'), '{"type":"module"}\n');
+  await execFileAsync('git', ['init'], { cwd: root });
   return root;
 }
 
