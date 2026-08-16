@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { buildPlannerPrompt, parsePlannerResult, planProject, validateProjectPlan, type ProjectManifest } from './project-planner.js';
+import { buildPlannerPrompt, createProjectState, parsePlannerResult, planProject, validateProjectPlan, type ProjectManifest } from './project-planner.js';
 
 const manifest: ProjectManifest = {
   root: '/tmp/project',
@@ -37,6 +37,19 @@ test('planner rejects dependency cycles', () => {
     { id: 'a', title: 'A', description: 'A', files: ['src/a.js'], dependencies: ['b'] },
     { id: 'b', title: 'B', description: 'B', files: ['src/b.js'], dependencies: ['a'] },
   ] }, manifest), /dependency cycle/);
+});
+
+test('new project state resets task lifecycle state', () => {
+  const plan = parsePlannerResult(JSON.stringify({ tasks: [
+    { id: 'first-task', title: 'First', description: 'First task.', files: ['src/a.js'], dependencies: [] },
+    { id: 'second-task', title: 'Second', description: 'Second task.', files: ['src/b.js'], dependencies: ['first-task'] },
+  ] }), manifest);
+  const state = createProjectState(plan);
+  assert.deepEqual(state.tasks.map(task => ({ id: task.id, status: task.status, attempts: task.attempts })), [
+    { id: 'first-task', status: 'ready', attempts: 0 },
+    { id: 'second-task', status: 'ready', attempts: 0 },
+  ]);
+  assert.deepEqual(state.tasks[1].dependencies, ['first-task']);
 });
 
 test('planProject passes a strict prompt to the model', async () => {
