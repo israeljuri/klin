@@ -1,0 +1,12 @@
+{
+  "id": "checkout-negative-tax-failure-001",
+  "title": "Add regression coverage for negative checkout tax",
+  "description": "Add a focused regression test proving that orderTotalCents rejects a negative tax rate. This is a controlled failure probe: only modify lab/coding-task/src/checkout-negative-tax.test.js, do not change checkout.js, and leave the product implementation unchanged. The test is expected to fail because negative-tax validation is not currently part of orderTotalCents. The purpose is to verify that Klin records failed model work and retry usage separately from successful work.",
+  "files": [
+    "lab/coding-task/src/checkout-negative-tax.test.js"
+  ],
+  "dependencies": [
+    "checkout-total-cost-success-001"
+  ],
+  "test_command": "npm --prefix lab/coding-task test -- src/checkout-negative-tax.test.js"
+}
