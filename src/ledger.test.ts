@@ -18,6 +18,11 @@ test('estimateCostUsd calculates from actual token counts and supplied rates', (
   assert.equal(estimateCostUsd(usage, 1, 2), (756 + 3665 * 2) / 1_000_000);
 });
 
+test('estimateCostUsd charges cached input at the cached rate', () => {
+  const cachedUsage: ModelUsage = { ...usage, input_tokens: 1000, cached_tokens: 400, output_tokens: 500 };
+  assert.equal(estimateCostUsd(cachedUsage, 0.10, 0.20, 0.002), (600 * 0.10 + 400 * 0.002 + 500 * 0.20) / 1_000_000);
+});
+
 test('assertWithinBudget permits work inside the limit', () => {
   assert.doesNotThrow(() => assertWithinBudget({ limit_usd: 1, spent_usd: 0.2 }, 0.3));
 });
