@@ -32,8 +32,8 @@ export function buildPlannerPrompt(goal: string, manifest: ProjectManifest): str
     '',
     'OUTPUT CONTRACT',
     'Return ONLY valid JSON with this shape:',
-    '{"tasks":[{"id":"stable-id","title":"short title","description":"precise implementation work","files":["relative/path"],"test_command":"optional command","dependencies":["other-task-id"]}]}',
-    'dependencies may be [] and test_command may be omitted.',
+    '{"tasks":[{"id":"stable-task-id","title":"short title","description":"precise implementation work","files":["relative/path"],"test_command":"optional command","dependencies":["other-task-id"]}]}',
+    'Use lowercase kebab-case task IDs when possible; simple alphanumeric/camelCase IDs are also accepted.',
     'IDs must be unique and dependencies must refer to task IDs in this same response.',
     '',
     'PROJECT MANIFEST',
@@ -48,7 +48,7 @@ export function validateProjectPlan(plan: ProjectPlan, manifest: ProjectManifest
 
   for (const task of plan.tasks) {
     if (!task || typeof task !== 'object') throw new Error('Each planned task must be an object');
-    if (!task.id || !/^[a-z0-9][a-z0-9-]*$/.test(task.id)) throw new Error(`Invalid task id: ${task.id}`);
+    if (!task.id || !/^[a-zA-Z0-9][a-zA-Z0-9-]*$/.test(task.id)) throw new Error(`Invalid task id: ${task.id}`);
     if (ids.has(task.id)) throw new Error(`Duplicate task id: ${task.id}`);
     ids.add(task.id);
     if (!task.title || !task.description) throw new Error(`Task ${task.id} must have a title and description`);
