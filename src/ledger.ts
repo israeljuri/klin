@@ -14,6 +14,7 @@ export type LedgerEntry = {
   reasoning_tokens: number;
   total_tokens: number;
   estimated_cost_usd: number;
+  actual_cost_usd: number;
   changed_files: string[];
   error?: string;
 };
@@ -64,7 +65,7 @@ export class BudgetCoordinator {
 }
 
 export function budgetSummary(limitUsd: number, entries: LedgerEntry[]): Budget {
-  const spent_usd = entries.reduce((sum, entry) => sum + entry.estimated_cost_usd, 0);
+  const spent_usd = entries.reduce((sum, entry) => sum + (entry.actual_cost_usd ?? entry.estimated_cost_usd), 0);
   return { limit_usd: limitUsd, spent_usd, remaining_usd: Math.max(0, limitUsd - spent_usd) };
 }
 
