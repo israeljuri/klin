@@ -9,7 +9,7 @@ import { BudgetCoordinator, loadLedger } from './ledger.js';
 
 export type ProjectRunnerOptions = {
   root: string; statePath?: string; model: Model; modelName: string; budgetUsd?: number;
-  inputRatePerMillion?: number; outputRatePerMillion?: number; contextMaxCharacters?: number;
+  inputRatePerMillion?: number; cachedInputRatePerMillion?: number; outputRatePerMillion?: number; contextMaxCharacters?: number;
   dryRun?: boolean; maxTasks?: number; maxAttemptsPerTask?: number; concurrency?: number;
 };
 export type ProjectRunResult = {
@@ -75,6 +75,7 @@ async function runTaskWithRetries(task: GraphTask, selectedFiles: string[], opti
         modelName: options.modelName,
         budgetUsd: options.budgetUsd,
         inputRatePerMillion: options.inputRatePerMillion,
+        cachedInputRatePerMillion: options.cachedInputRatePerMillion,
         outputRatePerMillion: options.outputRatePerMillion,
         contextMaxCharacters: options.contextMaxCharacters,
         dryRun: options.dryRun,
